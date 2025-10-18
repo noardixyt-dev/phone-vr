@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+<title>VR Phone Camera (Side-by-side)</title>
+<style>
+    html,body { height:100%; margin:0; background:#000; color:#fff; font-family:system-ui, -apple-system, sans-serif; }
+    #container { width:100%; height:100%; display:flex; align-items:center; justify-content:center; position:relative; overflow:hidden; }
+    canvas { background:#000; display:block; }
+    #controls {
+        position: absolute; top:10px; left:10px; right:10px; display:flex; gap:8px; align-items:center;
+        background:rgba(0,0,0,0.35); padding:8px; border-radius:8px;
+        backdrop-filter: blur(4px);
+    }
+    .btn { background:#111; color:#fff; border:1px solid #333; padding:8px 10px; border-radius:6px; cursor:pointer; }
+    .btn:active { transform:translateY(1px); }
+    label { font-size:13px; display:flex; gap:6px; align-items:center; }
+    input[type=range] { width:140px; }
+    #hint { position:absolute; bottom:12px; left:12px; right:12px; text-align:center; font-size:13px; color:#ddd; }
+    #video { display:none; }
+</style>
+</head>
+<body>
+    <div id="container">
+        <canvas id="left"></canvas>
+        <canvas id="right"></canvas>
+
+        <div id="controls">
+            <button id="startBtn" class="btn">Start Camera</button>
+            <button id="flipBtn" class="btn">Flip Camera</button>
+            <button id="fsBtn" class="btn">Fullscreen</button>
+            <label>Eye sep <input id="sep" type="range" min="-0.2" max="0.2" step="0.005" value="0"></label>
+            <label>Zoom <input id="zoom" type="range" min="1" max="2" step="0.01" value="1"></label>
+        </div>
+
+        <div id="hint">Put phone in VR headset. Use "Fullscreen" for best experience.</div>
+    </div>
+
+    <video id="video" autoplay playsinline muted></video>
+
+    <script>
+        const video = document.getElementById('video');
+        const leftCanvas = document.getElementById('left');
+        const rightCanvas = document.getElementById('right');
+        const startBtn = document.getElementById('startBtn');
+        const flipBtn = document.getElementById('flipBtn');
+        const fsBtn = document.getElementById('fsBtn');
+        const sepControl = document.getElementById('sep');
+        const zoomControl = document.getElementById('zoom');
+        const container = document.getElementById('container');
+
+        let stream = null;
+        let usingFacingMode = 'environment'; // or 'user'
+        let rafId = null;
+        let eyeSep = parseFloat(sepControl.value);
+        let zoom = parseFloat(zoomControl.value);
+
+        function stopStream() {
+            if (stream) {
+                stream.getTracks().forEach(t => t.stop());
+                stream = null;
+            }
+            if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+        }
+
+        async function startCamera() {
+            stopStream();
+            try {
+                const constraints = {
+                    audio: false,
+                    video: {
+                        facingMode: { ideal: usingFacingMode },
+                        // Request a reasonably high resolution; mobile browsers may ignore exact sizes:
+                        width: { ideal: 1920 },
+                        height: { ideal: 1080 }
+                    }
+                };
+                stream = await navigator.mediaDevices.getUserMedia(constraints);
+                video.srcObject = stream;
+                await video.play();
+                resizeCanvases();
+                drawLoop();
+            } catch (err) {
+                alert('Camera error: ' + (err && err.message ? err.message : err));
+                console.error(err);
+            }
+        }
+
+        async function tryFlipCamera() {
+            // Try toggling facingMode. Some browsers need deviceId selection for reliable flip.
+            usingFacingMode = (usingFacingMode === 'environment') ? 'user' : 'environment';
+            await startCamera();
+        }
+
+        function resizeCanvases() {
+            const dpr = window.devicePixelRatio || 1;
+            const w = container.clientWidth;
+            const h = container.clientHeight;
+            // Each eye gets half width
+            const eyeW = Math.floor(w / 2);
+            // Keep canvases full height
+            leftCanvas.style.width = eyeW + 'px';
+            leftCanvas.style.height = h + 'px';
+            rightCanvas.style.width = eyeW + 'px';
+            rightCanvas.style.height = h + 'px';
+            leftCanvas.width = eyeW * dpr;
+            leftCanvas.height = h * dpr;
+            rightCanvas.width = eyeW * dpr;
+            rightCanvas.height = h * dpr;
+        }
+
+        function drawLoop() {
+            const lw = leftCanvas.width;
+            const lh = leftCanvas.height;
+            const rw = rightCanvas.width;
+            const rh = rightCanvas.height;
+            const ctxL = leftCanvas.getContext('2d');
+            const ctxR = rightCanvas.getContext('2d');
+
+            function frame() {
+                if (!video.videoWidth) {
+                    rafId = requestAnimationFrame(frame);
+                    return;
+                }
+
+                // Source video dimensions:
+                const svw = video.videoWidth;
+                const svh = video.videoHeight;
+
+                // Target aspect and scale for zoom
+                const targetW = Math.max(svw / zoom, 1);
+                const targetH = Math.max(svh / zoom, 1);
+
+                // Compute center crop for zoom
+                const sxCenter = (svw - targetW) / 2;
+                const syCenter = (svh - targetH) / 2;
+
+                // Eye separation in fraction of target width -> shift source crop horizontally
+                // negative sep moves right eye left, etc.
+                const sepPx = eyeSep * targetW;
+
+                // Draw left eye (shift left by half separation)
+                const sxL = Math.max(0, Math.min(svw - targetW, sxCenter - sepPx * 0.5));
+                // Draw right eye (shift right by half separation)
+                const sxR = Math.max(0, Math.min(svw - targetW, sxCenter + sepPx * 0.5));
+                const sy = Math.max(0, Math.min(svh - targetH, syCenter));
+
+                // Draw and scale to canvas sizes
+                ctxL.clearRect(0,0,lw,lh);
+                ctxR.clearRect(0,0,rw,rh);
+
+                // Optionally mirror each canvas horizontally so lenses see correct orientation.
+                // Many VR viewers expect the image to not be mirrored. If you want mirrored output uncomment mirror lines.
+                //ctxL.setTransform(-1,0,0,1,lw,0); // mirror horizontally
+                //ctxR.setTransform(-1,0,0,1,rw,0);
+
+                ctxL.drawImage(video, sxL, sy, targetW, targetH, 0, 0, lw, lh);
+                ctxR.drawImage(video, sxR, sy, targetW, targetH, 0, 0, rw, rh);
+
+                // Reset transform if used
+                //ctxL.setTransform(1,0,0,1,0,0);
+                //ctxR.setTransform(1,0,0,1,0,0);
+
+                rafId = requestAnimationFrame(frame);
+            }
+            frame();
+        }
+
+        startBtn.addEventListener('click', async () => {
+            if (!stream) {
+                await startCamera();
+                startBtn.textContent = 'Stop Camera';
+            } else {
+                stopStream();
+                startBtn.textContent = 'Start Camera';
+            }
+        });
+
+        flipBtn.addEventListener('click', async () => {
+            await tryFlipCamera();
+        });
+
+        fsBtn.addEventListener('click', async () => {
+            try {
+                if (document.fullscreenElement) {
+                    await document.exitFullscreen();
+                } else {
+                    await container.requestFullscreen();
+                }
+            } catch (e) {
+                console.error('Fullscreen failed', e);
+            }
+        });
+
+        sepControl.addEventListener('input', () => {
+            eyeSep = parseFloat(sepControl.value);
+        });
+        zoomControl.addEventListener('input', () => {
+            zoom = parseFloat(zoomControl.value);
+        });
+
+        window.addEventListener('resize', () => {
+            resizeCanvases();
+        });
+
+        // Cleanup when page hidden/unloaded
+        window.addEventListener('pagehide', stopStream);
+        window.addEventListener('beforeunload', stopStream);
+
+        // If user wants auto-start on load on some devices, remove comment:
+        // startCamera();
+    </script>
+</body>
+</html>
