@@ -50,7 +50,7 @@
       <button id="startBtn" class="btn">Start Camera</button>
       <button id="flipBtn" class="btn">Flip Camera</button>
       <button id="fsBtn" class="btn">Fullscreen</button>
-      <label>Eye sep <input id="sep" type="range" min="-0.2" max="0.2" step="0.002" value="0.02"> <span id="sepVal">0.02</span></label>
+      <label>Eye sep <input id="sep" type="range" min="-0.4" max="0.4" step="0.002" value="0.2"> <span id="sepVal">0.20</span></label>
       <label>Zoom <input id="zoom" type="range" min="1" max="2" step="0.01" value="1.05"> <span id="zoomVal">1.05</span></label>
       <label><input id="mirror" type="checkbox"> Mirror</label>
     </div>
@@ -61,6 +61,7 @@
       <button id="menuToggle" class="menu-btn">Settings</button>
         <select id="deviceSelect" aria-label="Camera device"></select>
         <label>FPS <select id="fpsSelect"><option value="30">30</option><option value="60">60</option><option value="120">120</option></select></label>
+        <label>Zoom <input id="zoomMenu" type="range" min="1" max="2" step="0.01" value="1.05"> <span id="zoomMenuVal">1.05</span></label>
         <label>Wide <input id="wideMode" type="checkbox"></label>
         <label>Menu Gyro <input id="gyroToggle" type="checkbox"></label>
   <label>Align X <input id="alignX" type="range" min="-0.1" max="0.1" step="0.001" value="0"></label>
@@ -157,6 +158,8 @@
       eyeSep = parseFloat(e.target.value) || 0;
       sepVal.textContent = eyeSep.toFixed(3);
     });
+    // set initial display for sep control
+    eyeSep = parseFloat(sepControl.value);
 
     zoomControl.addEventListener('input', (e) => {
       zoom = parseFloat(e.target.value) || 1;
@@ -191,14 +194,26 @@
   // single align slider
   const alignX = document.getElementById('alignX');
   let alignOffset = parseFloat(alignX.value) || 0;
-    // show/hide UI helpers (add .ui class to elements that should auto-hide)
-    menu.classList.add('ui');
-    document.getElementById('controls').classList.add('ui');
-    function showUI() { menu.classList.add('visible'); document.getElementById('controls').classList.add('visible'); cursor.style.display = 'block'; scheduleMenuHide(); }
-    function hideUI() { menu.classList.remove('visible'); document.getElementById('controls').classList.remove('visible'); cursor.style.display = 'none'; gyroToggle.checked = false; gyroEnabled = false; }
+  // show/hide UI helpers (add .ui class to elements that should auto-hide)
+  menu.classList.add('ui');
+  document.getElementById('controls').classList.add('ui');
+  // showUI now ensures the menu element is actually displayed (was display:none which prevented showing)
+  function showUI() { menu.style.display = 'flex'; menu.classList.add('visible'); document.getElementById('controls').classList.add('visible'); /* canvas cursor is used for VR; do not toggle DOM cursor */ scheduleMenuHide(); }
+  function hideUI() { menu.classList.remove('visible'); document.getElementById('controls').classList.remove('visible'); menu.style.display = 'none'; gyroToggle.checked = false; gyroEnabled = false; }
 
     alignX.addEventListener('input', (e) => { alignOffset = parseFloat(e.target.value) || 0; });
 
+    // menu zoom control sync with top zoom control
+    const zoomMenu = document.getElementById('zoomMenu');
+    const zoomMenuVal = document.getElementById('zoomMenuVal');
+    zoomMenu.addEventListener('input', (e) => {
+      const v = parseFloat(e.target.value) || 1; zoom = v; zoomVal.textContent = v.toFixed(2); zoomMenuVal.textContent = v.toFixed(2);
+    });
+    // keep both sliders in sync if top zoom changes
+    zoomControl.addEventListener('input', (e) => { const v = parseFloat(e.target.value) || 1; zoomMenu.value = v; zoomMenuVal.textContent = v.toFixed(2); });
+
+    // last tap coords for anchored menu
+    let lastTapX = window.innerWidth/2, lastTapY = window.innerHeight - 80;
     menuToggle.addEventListener('click', () => {
       menuActive = !menuActive;
       if (menuActive) showUI(); else hideUI();
@@ -216,10 +231,12 @@
       gazeX = Math.max(0, Math.min(window.innerWidth, gazeX));
       gazeY = Math.max(0, Math.min(window.innerHeight, gazeY));
       // determine focused element under center point (cursor is visually centered)
-      if (menuActive) {
-        const el = document.elementFromPoint(window.innerWidth/2, window.innerHeight/2);
-        // only focus menu children
-        if (el && menu.contains(el)) highlightFocus(el); else highlightFocus(null);
+      if (menuActive || gyroEnabled) {
+        // when gyro active we want to be able to focus both the floating menu and the top controls
+        const cx = Math.round(window.innerWidth/2), cy = Math.round(window.innerHeight/2);
+        const el = document.elementFromPoint(cx, cy);
+        if (el && (menu.contains(el) || document.getElementById('controls').contains(el))) highlightFocus(el);
+        else highlightFocus(null);
       }
     }
 
@@ -240,18 +257,21 @@
 
     // Touch to open menu or to click focused element when menu is open (YouTube VR style)
     window.addEventListener('touchstart', (ev) => {
-      if (!menuActive) { menuActive = true; showUI(); }
+      const t = ev.touches && ev.touches[0];
+      if (t) { lastTapX = t.clientX; lastTapY = t.clientY; }
+      if (!menuActive) { menuActive = true; showUIAt(lastTapX, lastTapY); }
       else {
-        // if focused element is in menu and menu active, click it
-        if (focusEl && menu.contains(focusEl)) { focusEl.click(); }
+        // if focused element is in menu/controls and menu active, click it
+        if (focusEl && (menu.contains(focusEl) || document.getElementById('controls').contains(focusEl))) { focusEl.click(); }
         scheduleMenuHide();
       }
     }, { passive: true });
 
-    // Same for mouse
+    // Same for mouse - open anchored at click position
     window.addEventListener('click', (ev) => {
-      if (!menuActive) { menuActive = true; showUI(); }
-      else { if (focusEl && menu.contains(focusEl)) { focusEl.click(); } scheduleMenuHide(); }
+      lastTapX = ev.clientX; lastTapY = ev.clientY;
+      if (!menuActive) { menuActive = true; showUIAt(lastTapX, lastTapY); }
+      else { if (focusEl && (menu.contains(focusEl) || document.getElementById('controls').contains(focusEl))) { focusEl.click(); } scheduleMenuHide(); }
     });
 
     gyroToggle.addEventListener('change', async (e) => {
@@ -273,14 +293,32 @@
       }
     });
 
-    // initialize menu hidden and cursor hidden
-    menu.style.display = 'none'; cursor.style.display = 'none'; gyroEnabled = false; gyroToggle.checked = false;
+  // initialize menu hidden; the canvas cursor is drawn into canvases when menu is visible
+  menu.style.display = 'none'; gyroEnabled = false; gyroToggle.checked = false;
 
     // menu auto-hide timer
     let menuTimeout = null;
     function scheduleMenuHide() {
       if (menuTimeout) clearTimeout(menuTimeout);
+      // don't auto-hide while gyro is active
+      if (gyroEnabled) return;
       menuTimeout = setTimeout(() => { menuActive = false; hideUI(); }, 5000);
+    }
+
+    // show menu anchored at screen coords (x,y)
+    function showUIAt(x,y) {
+      // position menu so its center is near the tap point but keep it inside viewport
+      const mw = Math.min(window.innerWidth * 0.92, 480);
+      const mh = 120;
+      const left = Math.max(8, Math.min(window.innerWidth - mw - 8, x - mw/2));
+      const top = Math.max(8, Math.min(window.innerHeight - mh - 8, y - mh/2));
+      menu.style.left = left + 'px';
+      menu.style.bottom = 'auto';
+      menu.style.top = top + 'px';
+      menu.style.display = 'flex';
+      menu.classList.add('visible');
+      document.getElementById('controls').classList.add('visible');
+      scheduleMenuHide();
     }
 
 
@@ -321,6 +359,21 @@
     wideMode.addEventListener('change', async (e) => {
       const wantWide = e.target.checked;
       if (!stream) return;
+      // Prefer switching to a physical wide-angle camera (if enumerated and labeled accordingly).
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const cams = devices.filter(d => d.kind === 'videoinput');
+        const wideCandidate = cams.find(c => /wide|ultra|ultrawide|0.5x/i.test(c.label));
+        if (wantWide && wideCandidate) {
+          // restart stream using the wide camera deviceId
+          stopStream();
+          const constraints = { video: { deviceId: { exact: wideCandidate.deviceId }, width: { ideal: 1920 }, height: { ideal: 1080 } } };
+          stream = await navigator.mediaDevices.getUserMedia(constraints);
+          video.srcObject = stream; await video.play(); resizeCanvases();
+          return;
+        }
+      } catch (err) { console.warn('wideMode device search failed', err); }
+      // Fallback: try applyConstraints zoom if the track supports it
       const track = stream.getVideoTracks()[0]; if (!track) return;
       const capabilities = track.getCapabilities ? track.getCapabilities() : {};
       const settings = {};
@@ -419,14 +472,20 @@
         ctxL.drawImage(src, sxL, sy, tW, tH, 0, 0, lw, lh);
         ctxR.drawImage(src, sxR, sy, tW, tH, 0, 0, rw, rh);
 
-        // draw centered cursor visible in both eyes when UI is active
-        if (menu.classList.contains('visible')) {
-          const cxL = lw / 2, cyL = lh / 2;
-          const cxR = rw / 2, cyR = rh / 2;
-          const radius = Math.max(6, Math.min(14, Math.floor(lw * 0.012)));
-          ctxL.fillStyle = 'rgba(255,255,255,0.95)'; ctxL.beginPath(); ctxL.arc(cxL, cyL, radius, 0, Math.PI * 2); ctxL.fill();
-          ctxR.fillStyle = 'rgba(255,255,255,0.95)'; ctxR.beginPath(); ctxR.arc(cxR, cyR, radius, 0, Math.PI * 2); ctxR.fill();
-        }
+            // draw centered cursors visible in both eyes when UI is active
+            if (menu.classList.contains('visible')) {
+              const radius = Math.max(6, Math.min(14, Math.floor(lw * 0.012)));
+              // compute cursor separation in pixels based on current tW crop
+              const sepPx = eyeSep * tW;
+              const alignPx = alignOffset * tW;
+              // For each eye canvas, position the dot relative to the canvas center but offset horizontally
+              // so the two dots match the stereo separation users see.
+              const centerLx = lw / 2 - (sepPx * 0.5) * (lw / tW) + (alignPx * (lw / tW));
+              const centerRx = rw / 2 + (sepPx * 0.5) * (rw / tW) + (alignPx * (rw / tW));
+              const centerY = lh / 2;
+              ctxL.fillStyle = 'rgba(255,255,255,0.95)'; ctxL.beginPath(); ctxL.arc(centerLx, centerY, radius, 0, Math.PI * 2); ctxL.fill();
+              ctxR.fillStyle = 'rgba(255,255,255,0.95)'; ctxR.beginPath(); ctxR.arc(centerRx, centerY, radius, 0, Math.PI * 2); ctxR.fill();
+            }
 
         ctxL.restore(); ctxR.restore();
 
