@@ -17,14 +17,14 @@
   }
   /* on-screen cursor and floating menu */
   #cursor {
-    position: absolute; width:18px; height:18px; background:rgba(255,255,255,0.9);
+    position: fixed; left:50%; top:50%; width:18px; height:18px; background:rgba(255,255,255,0.9);
     border-radius:50%; transform:translate(-50%,-50%); pointer-events:none; z-index:60; display:none;
     box-shadow:0 0 6px rgba(0,0,0,0.6);
   }
   #menu {
     position: absolute; bottom:18px; left:50%; transform:translateX(-50%); z-index:55;
     background:rgba(0,0,0,0.6); color:#fff; padding:10px; border-radius:10px; display:none; gap:8px;
-    display:flex; flex-direction:row; align-items:center; backdrop-filter: blur(6px);
+    flex-direction:row; align-items:center; backdrop-filter: blur(6px);
   }
   #menu label { display:flex; align-items:center; gap:6px; margin:0 6px; }
   .menu-btn { background:#222; border:1px solid #333; color:#fff; padding:6px 8px; border-radius:6px; cursor:pointer; }
@@ -56,10 +56,12 @@
     <div id="cursor"></div>
     <div id="menu">
       <button id="menuToggle" class="menu-btn">Settings</button>
-      <select id="deviceSelect" aria-label="Camera device"></select>
-      <label>FPS <select id="fpsSelect"><option value="30">30</option><option value="60">60</option><option value="120">120</option></select></label>
-      <label>Wide <input id="wideMode" type="checkbox"></label>
-      <label>Menu Gyro <input id="gyroToggle" type="checkbox"></label>
+        <select id="deviceSelect" aria-label="Camera device"></select>
+        <label>FPS <select id="fpsSelect"><option value="30">30</option><option value="60">60</option><option value="120">120</option></select></label>
+        <label>Wide <input id="wideMode" type="checkbox"></label>
+        <label>Menu Gyro <input id="gyroToggle" type="checkbox"></label>
+        <label>Left X <input id="leftX" type="range" min="-0.2" max="0.2" step="0.001" value="0"></label>
+        <label>Right X <input id="rightX" type="range" min="-0.2" max="0.2" step="0.001" value="0"></label>
     </div>
   </div>
 
@@ -186,6 +188,11 @@
     let menuActive = false;
     let cursorX = window.innerWidth / 2;
     let cursorY = window.innerHeight / 2;
+  // offsets for per-eye calibration (fraction of crop width)
+  const leftX = document.getElementById('leftX');
+  const rightX = document.getElementById('rightX');
+  let leftOffset = parseFloat(leftX.value) || 0;
+  let rightOffset = parseFloat(rightX.value) || 0;
 
     menuToggle.addEventListener('click', () => {
       menuActive = !menuActive;
@@ -193,48 +200,60 @@
       cursor.style.display = menuActive ? 'block' : 'none';
     });
 
-    // tap behavior: first tap activates cursor/menu, second tap clicks
-    let tappedOnce = false;
-    window.addEventListener('touchstart', (e) => {
-      const t = e.touches[0];
-      cursorX = t.clientX; cursorY = t.clientY; updateCursor();
-      if (!tappedOnce) {
-        tappedOnce = true;
-        cursor.style.display = 'block';
-        // show menu if user holds for a short time
-        setTimeout(() => { if (tappedOnce) { menu.style.display = 'flex'; menuActive = true; } }, 600);
-      } else {
-        // second tap: click element under cursor
-        const el = document.elementFromPoint(cursorX, cursorY);
-        if (el) el.click();
-        tappedOnce = false;
-      }
-    }, { passive: true });
+    // gaze-based selection: cursor stays centered, use deviceorientation to move virtual gaze
+    function updateCursor() {
+      // cursor is centered via CSS; show/hide handled by menuActive
+      // no-op, kept for API compatibility
+    }
 
-    // desktop click also toggles/activates
-    window.addEventListener('click', (e) => {
-      cursorX = e.clientX; cursorY = e.clientY; updateCursor();
-      if (!tappedOnce) {
-        tappedOnce = true; cursor.style.display = 'block';
-        setTimeout(() => { tappedOnce = false; }, 800);
-      } else {
-        const el = document.elementFromPoint(cursorX, cursorY);
-        if (el) el.click();
-        tappedOnce = false;
-      }
-    });
-
-    function updateCursor() { cursor.style.left = cursorX + 'px'; cursor.style.top = cursorY + 'px'; }
-
+    // gaze point in screen coords computed from device orientation
+    let gazeX = window.innerWidth / 2, gazeY = window.innerHeight / 2;
     function onDeviceOrientation(e) {
       if (!gyroEnabled) return;
       const gx = e.gamma || 0; const gy = e.beta || 0;
-      cursorX = (window.innerWidth / 2) + (gx / 90) * (window.innerWidth / 4);
-      cursorY = (window.innerHeight / 2) + (gy / 90) * (window.innerHeight / 4);
-      cursorX = Math.max(0, Math.min(window.innerWidth, cursorX));
-      cursorY = Math.max(0, Math.min(window.innerHeight, cursorY));
-      updateCursor();
+      gazeX = (window.innerWidth / 2) + (gx / 90) * (window.innerWidth / 3);
+      gazeY = (window.innerHeight / 2) + (gy / 90) * (window.innerHeight / 3);
+      gazeX = Math.max(0, Math.min(window.innerWidth, gazeX));
+      gazeY = Math.max(0, Math.min(window.innerHeight, gazeY));
+      // determine focused element under center point (cursor is visually centered)
+      if (menuActive) {
+        const el = document.elementFromPoint(window.innerWidth/2, window.innerHeight/2);
+        highlightFocus(el);
+      }
     }
+
+    // focus highlighting (no auto-click). Selection happens only on explicit tap/click.
+    let focusEl = null;
+    function highlightFocus(el) {
+      if (focusEl === el) return;
+      if (focusEl) focusEl.classList.remove('focused');
+      focusEl = el;
+      if (focusEl) {
+        focusEl.classList.add('focused');
+      }
+    }
+
+    // Touch to open menu or to click focused element when menu is open
+    window.addEventListener('touchstart', (ev) => {
+      // small UX: if menu hidden, show it and show cursor; if visible, click focused element
+      if (!menuActive) {
+        menuActive = true; menu.style.display = 'flex'; cursor.style.display = 'block';
+      } else {
+        const el = document.elementFromPoint(window.innerWidth/2, window.innerHeight/2);
+        if (el) el.click();
+      }
+      // don't interfere with other handlers
+    }, { passive: true });
+
+    // Same behavior for mouse click on desktop
+    window.addEventListener('click', (ev) => {
+      if (!menuActive) {
+        menuActive = true; menu.style.display = 'flex'; cursor.style.display = 'block';
+      } else {
+        const el = document.elementFromPoint(window.innerWidth/2, window.innerHeight/2);
+        if (el) el.click();
+      }
+    });
 
     gyroToggle.addEventListener('change', async (e) => {
       gyroEnabled = e.target.checked;
@@ -248,6 +267,12 @@
         window.removeEventListener('deviceorientation', onDeviceOrientation);
       }
     });
+
+    // initialize menu hidden and cursor hidden
+    menu.style.display = 'none'; cursor.style.display = 'none'; gyroEnabled = false; gyroToggle.checked = false;
+
+    leftX.addEventListener('input', (e) => { leftOffset = parseFloat(e.target.value) || 0; });
+    rightX.addEventListener('input', (e) => { rightOffset = parseFloat(e.target.value) || 0; });
 
     async function enumerateCameras() {
       try {
@@ -294,7 +319,12 @@
         settings.advanced = [{ zoom: wantWide ? zmin : Math.min(zmax, zmin + (zmax - zmin) / 2) }];
       }
       try { await track.applyConstraints(settings); }
-      catch (err) { console.warn('wideMode applyConstraints failed', err); }
+      catch (err) {
+        console.warn('wideMode applyConstraints failed', err);
+        // revert checkbox if it failed
+        wideMode.checked = !wantWide;
+        alert('Wide mode not supported on this device/browser');
+      }
     });
 
     // helper to draw video (or rotated video) onto an offscreen rotated canvas
@@ -357,10 +387,11 @@
         const sxc = (srcW - tW) / 2;
         const syc = (srcH - tH) / 2;
 
-        const sepPx = eyeSep * tW; // eyeSep is fraction of crop width
+  const sepPx = eyeSep * tW; // eyeSep is fraction of crop width
 
-        const sxL = Math.max(0, Math.min(srcW - tW, sxc - sepPx * 0.5));
-        const sxR = Math.max(0, Math.min(srcW - tW, sxc + sepPx * 0.5));
+  // apply per-eye offsets (fractions of crop width)
+  const sxL = Math.max(0, Math.min(srcW - tW, sxc - sepPx * 0.5 + leftOffset * tW));
+  const sxR = Math.max(0, Math.min(srcW - tW, sxc + sepPx * 0.5 + rightOffset * tW));
         const sy = Math.max(0, Math.min(srcH - tH, syc));
 
         // draw options: mirror by transforming canvas
