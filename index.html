@@ -34,6 +34,11 @@
   #video { display:none; }
   .ui { transition: opacity 300ms ease; opacity:0; pointer-events:none; }
   .ui.visible { opacity:1; pointer-events:auto; }
+  /* centered gaze pointer + dwell ring */
+  .gaze-pointer { position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); z-index:60; pointer-events:none; }
+  .gaze-ring { width:56px; height:56px; border-radius:50%; background:rgba(0,0,0,0.35); display:flex; align-items:center; justify-content:center; }
+  .gaze-dot { width:10px; height:10px; border-radius:50%; background:rgba(255,255,255,0.95); }
+  .gaze-progress { position:absolute; inset:0; border-radius:50%; display:none; }
 </style>
 </head>
 <body>
@@ -52,7 +57,7 @@
 
   <div id="hint">Put phone in VR headset. Use "Fullscreen" for best experience.</div>
     <div id="menu">
-      <button id="menuToggle" class="menu-btn">Settings</button>
+  <button id="menuToggle" class="menu-btn">Settings</button>
         <select id="deviceSelect" aria-label="Camera device"></select>
         <label>FPS <select id="fpsSelect"><option value="30">30</option><option value="60">60</option><option value="120">120</option></select></label>
   <label>Zoom <input id="zoomMenu" type="range" min="1" max="2" step="0.01" value="1"> <span id="zoomMenuVal">1.00</span></label>
@@ -67,6 +72,17 @@
   </div>
 
   <video id="video" autoplay playsinline muted></video>
+
+  <!-- centered gaze pointer used for selection/dwell click -->
+  <div class="gaze-pointer" id="gazePointer" aria-hidden="true">
+    <div class="gaze-ring">
+      <svg class="gaze-progress" viewBox="0 0 100 100">
+        <circle cx="50" cy="50" r="45" fill="none" stroke="rgba(255,255,255,0.12)" stroke-width="8" />
+        <circle id="gazeProgressCircle" cx="50" cy="50" r="45" fill="none" stroke="rgba(0,170,255,0.95)" stroke-width="8" stroke-dasharray="283" stroke-dashoffset="283" stroke-linecap="round" transform="rotate(-90 50 50)" />
+      </svg>
+      <div class="gaze-dot"></div>
+    </div>
+  </div>
 
   <script>
     const video = document.getElementById('video');
@@ -162,7 +178,7 @@
   // initialize zoom display values to match controls (ensure 1.00 default)
   zoom = parseFloat(zoomControl.value) || 1;
   zoomVal.textContent = zoom.toFixed(2);
-  zoomMenuVal.textContent = zoom.toFixed(2);
+  // zoomMenuVal will be initialized after menu elements are queried below
 
     zoomControl.addEventListener('input', (e) => {
       zoom = parseFloat(e.target.value) || 1;
@@ -185,13 +201,18 @@
 
   // --- Menu, cursor, device picker, gyro and tap-to-click behavior ---
   const menu = document.getElementById('menu');
-    const menuToggle = document.getElementById('menuToggle');
+  const menuToggle = document.getElementById('menuToggle');
     const deviceSelect = document.getElementById('deviceSelect');
     const fpsSelect = document.getElementById('fpsSelect');
   const wideMode = document.getElementById('wideMode');
 
+    // gaze pointer elements
+    const gazePointer = document.getElementById('gazePointer');
+    const gazeProgressCircle = document.getElementById('gazeProgressCircle');
+
     let gyroEnabled = false;
     let menuActive = false;
+  // activation only happens on explicit tap/click; no auto-activation on focus
   // single align slider
   const alignX = document.getElementById('alignX');
   let alignOffset = parseFloat(alignX.value) || 0;
@@ -249,6 +270,14 @@
         if (el && (menu.contains(el) || document.getElementById('controls').contains(el))) highlightFocus(el);
         else highlightFocus(null);
       }
+      // show pointer when menu visible or gyro active
+      if (menu.classList.contains('visible') || gyroEnabled) {
+        gazePointer.style.display = 'block';
+      } else {
+        gazePointer.style.display = 'none';
+      }
+      // also update controls position when anchored
+      if (menuActive && menuAnchor && menuAnchor.anchored) updateControlsAnchorPosition();
       // if we have a menu anchor in world angles, update DOM position so the menu stays anchored in world space
       if (menuActive && menuAnchor && menuAnchor.anchored) {
         updateMenuAnchorPosition();
@@ -270,6 +299,8 @@
         menu.style.left = left + 'px';
         menu.style.top = top + 'px';
         menu.style.transform = 'none';
+  // position top controls relative to the same anchor (above the menu)
+  updateControlsAnchorPosition();
       } else if (menuAnchor.screenX != null) {
         // fallback: keep fixed screen position
         menu.style.left = Math.max(8, Math.min(window.innerWidth - menu.offsetWidth - 8, menuAnchor.screenX - menu.offsetWidth/2)) + 'px';
@@ -278,11 +309,35 @@
       }
     }
 
+    function updateControlsAnchorPosition() {
+      // place the controls above the anchored point in world space
+      if (!menuAnchor) return;
+      // compute screen position for stored anchor angles or fallback to screenX
+      let sx, sy;
+      if (typeof menuAnchor.gamma === 'number') {
+        sx = (window.innerWidth / 2) + (menuAnchor.gamma / 90) * (window.innerWidth / 3);
+        sy = (window.innerHeight / 2) + (menuAnchor.beta / 90) * (window.innerHeight / 3);
+      } else if (menuAnchor.screenX != null) {
+        sx = menuAnchor.screenX; sy = menuAnchor.screenY;
+      } else return;
+      // offset controls upward so they appear at the top relative to anchor
+      const controlsEl = document.getElementById('controls');
+      const cw = controlsEl.offsetWidth || (window.innerWidth - 20);
+      const ch = controlsEl.offsetHeight || 48;
+      const offsetY = Math.max(80, window.innerHeight * 0.28);
+      const left = Math.max(8, Math.min(window.innerWidth - cw - 8, sx - cw / 2));
+      const top = Math.max(8, Math.min(window.innerHeight - ch - 8, sy - offsetY - ch / 2));
+      controlsEl.style.left = left + 'px';
+      controlsEl.style.top = top + 'px';
+      controlsEl.style.right = 'auto';
+      controlsEl.style.transform = 'none';
+    }
+
     // focus highlighting (no auto-click). Selection happens only on explicit tap/click.
     let focusEl = null;
     let focusCandidate = null;
     let focusStableCount = 0;
-    function highlightFocus(el) {
+  function highlightFocus(el) {
       // simple stability: require same element for 2 frames
       if (focusCandidate !== el) { focusCandidate = el; focusStableCount = 0; }
       focusStableCount++;
@@ -290,8 +345,9 @@
       if (focusEl === el) return;
       if (focusEl) focusEl.classList.remove('focused');
       focusEl = el;
-      if (focusEl) focusEl.classList.add('focused');
+      if (focusEl) focusEl.classList.add('focused'); else lastActivatedEl = null;
     }
+    // immediate activation; dwell/progress ring disabled
 
     // Touch to open menu or to click focused element when menu is open (YouTube VR style)
     window.addEventListener('touchstart', (ev) => {
@@ -299,13 +355,11 @@
       if (t) { lastTapX = t.clientX; lastTapY = t.clientY; }
       if (!menuActive) {
         menuActive = true;
-        // establish anchor: if gyro is active use current smoothed angles, otherwise store screen anchor
-        if (gyroEnabled) {
-          menuAnchor = { anchored: true, gamma: _g_lastGamma, beta: _g_lastBeta };
-        } else {
-          menuAnchor = { anchored: true, screenX: lastTapX, screenY: lastTapY };
-        }
+        // establish screen anchor first
+        menuAnchor = { anchored: true, screenX: lastTapX, screenY: lastTapY };
         showUIAt(lastTapX, lastTapY);
+        // try to enable gyro so the menu can be anchored in world-space
+        tryEnableGyro().then(ok => { if (ok) enableGyro(); });
       }
       else {
         // if focused element is in menu/controls and menu active, click it
@@ -331,9 +385,13 @@
       lastTapX = ev.clientX; lastTapY = ev.clientY;
       if (!menuActive) {
         menuActive = true;
-        if (gyroEnabled) { menuAnchor = { anchored: true, gamma: _g_lastGamma, beta: _g_lastBeta }; }
-        else { menuAnchor = { anchored: true, screenX: lastTapX, screenY: lastTapY }; }
+        // establish screen anchor and show
+        menuAnchor = { anchored: true, screenX: lastTapX, screenY: lastTapY };
         showUIAt(lastTapX, lastTapY);
+        // request gyro permission and enable if granted so the anchor follows head movement
+        tryEnableGyro().then(ok => { if (ok) enableGyro(); });
+        // show pointer when menu opens
+        gazePointer.style.display = 'block';
       }
       else {
         if (focusEl && (menu.contains(focusEl) || document.getElementById('controls').contains(focusEl))) {
@@ -344,6 +402,8 @@
         }
       }
     });
+
+    // gyro toggle removed; menu now requests gyro when opened
 
     // permission hint overlay
     const permHint = document.getElementById('permHint');
