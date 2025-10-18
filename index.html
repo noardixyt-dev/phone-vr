@@ -223,17 +223,25 @@
 
     // gaze point in screen coords computed from device orientation
     let gazeX = window.innerWidth / 2, gazeY = window.innerHeight / 2;
+    // smoothing state for gyro (low-pass)
+    let _g_lastGamma = 0, _g_lastBeta = 0;
+    const _g_alpha = 0.12; // smoothing factor (0..1) lower = smoother
     function onDeviceOrientation(e) {
       if (!gyroEnabled) return;
       const gx = e.gamma || 0; const gy = e.beta || 0;
-      gazeX = (window.innerWidth / 2) + (gx / 90) * (window.innerWidth / 3);
-      gazeY = (window.innerHeight / 2) + (gy / 90) * (window.innerHeight / 3);
+      // low-pass filter
+      _g_lastGamma = _g_lastGamma * (1 - _g_alpha) + gx * _g_alpha;
+      _g_lastBeta = _g_lastBeta * (1 - _g_alpha) + gy * _g_alpha;
+      const sgx = _g_lastGamma, sgy = _g_lastBeta;
+      // map smoothed angles to a screen-space gaze point
+      gazeX = (window.innerWidth / 2) + (sgx / 90) * (window.innerWidth / 3);
+      gazeY = (window.innerHeight / 2) + (sgy / 90) * (window.innerHeight / 3);
       gazeX = Math.max(0, Math.min(window.innerWidth, gazeX));
       gazeY = Math.max(0, Math.min(window.innerHeight, gazeY));
-      // determine focused element under center point (cursor is visually centered)
+
+      // determine focused element under the gaze point (not always center)
       if (menuActive || gyroEnabled) {
-        // when gyro active we want to be able to focus both the floating menu and the top controls
-        const cx = Math.round(window.innerWidth/2), cy = Math.round(window.innerHeight/2);
+        const cx = Math.round(gazeX), cy = Math.round(gazeY);
         const el = document.elementFromPoint(cx, cy);
         if (el && (menu.contains(el) || document.getElementById('controls').contains(el))) highlightFocus(el);
         else highlightFocus(null);
@@ -315,11 +323,17 @@
       menu.style.left = left + 'px';
       menu.style.bottom = 'auto';
       menu.style.top = top + 'px';
+      // when anchored we remove the translateX(-50%) so left is absolute
+      menu.style.transform = 'none';
       menu.style.display = 'flex';
       menu.classList.add('visible');
       document.getElementById('controls').classList.add('visible');
       scheduleMenuHide();
     }
+
+    // ensure showUI (centered) resets transform so menu centers with translateX
+    function showUI() { menu.style.transform = 'translateX(-50%)'; menu.style.left = '50%'; menu.style.top = 'auto'; menu.style.bottom = '18px'; menu.style.display = 'flex'; menu.classList.add('visible'); document.getElementById('controls').classList.add('visible'); scheduleMenuHide(); }
+    // hideUI already exists earlier and will hide menu
 
 
     async function enumerateCameras() {
