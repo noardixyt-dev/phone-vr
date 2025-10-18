@@ -180,8 +180,7 @@
     });
 
   // --- Menu, cursor, device picker, gyro and tap-to-click behavior ---
-    const cursor = document.getElementById('cursor');
-    const menu = document.getElementById('menu');
+  const menu = document.getElementById('menu');
     const menuToggle = document.getElementById('menuToggle');
     const deviceSelect = document.getElementById('deviceSelect');
     const fpsSelect = document.getElementById('fpsSelect');
@@ -247,6 +246,33 @@
         if (el && (menu.contains(el) || document.getElementById('controls').contains(el))) highlightFocus(el);
         else highlightFocus(null);
       }
+      // if we have a menu anchor in world angles, update DOM position so the menu stays anchored in world space
+      if (menuActive && menuAnchor && menuAnchor.anchored) {
+        updateMenuAnchorPosition();
+      }
+    }
+
+    // menu anchor state (world angles or screen fallback)
+    let menuAnchor = null;
+
+    function updateMenuAnchorPosition() {
+      if (!menuAnchor) return;
+      // compute screen position for stored anchor angles
+      if (typeof menuAnchor.gamma === 'number') {
+        const sx = (window.innerWidth / 2) + (menuAnchor.gamma / 90) * (window.innerWidth / 3);
+        const sy = (window.innerHeight / 2) + (menuAnchor.beta / 90) * (window.innerHeight / 3);
+        // clamp into viewport
+        const left = Math.max(8, Math.min(window.innerWidth - menu.offsetWidth - 8, sx - menu.offsetWidth / 2));
+        const top = Math.max(8, Math.min(window.innerHeight - menu.offsetHeight - 8, sy - menu.offsetHeight / 2));
+        menu.style.left = left + 'px';
+        menu.style.top = top + 'px';
+        menu.style.transform = 'none';
+      } else if (menuAnchor.screenX != null) {
+        // fallback: keep fixed screen position
+        menu.style.left = Math.max(8, Math.min(window.innerWidth - menu.offsetWidth - 8, menuAnchor.screenX - menu.offsetWidth/2)) + 'px';
+        menu.style.top = Math.max(8, Math.min(window.innerHeight - menu.offsetHeight - 8, menuAnchor.screenY - menu.offsetHeight/2)) + 'px';
+        menu.style.transform = 'none';
+      }
     }
 
     // focus highlighting (no auto-click). Selection happens only on explicit tap/click.
@@ -268,7 +294,16 @@
     window.addEventListener('touchstart', (ev) => {
       const t = ev.touches && ev.touches[0];
       if (t) { lastTapX = t.clientX; lastTapY = t.clientY; }
-      if (!menuActive) { menuActive = true; showUIAt(lastTapX, lastTapY); }
+      if (!menuActive) {
+        menuActive = true;
+        // establish anchor: if gyro is active use current smoothed angles, otherwise store screen anchor
+        if (gyroEnabled) {
+          menuAnchor = { anchored: true, gamma: _g_lastGamma, beta: _g_lastBeta };
+        } else {
+          menuAnchor = { anchored: true, screenX: lastTapX, screenY: lastTapY };
+        }
+        showUIAt(lastTapX, lastTapY);
+      }
       else {
         // if focused element is in menu/controls and menu active, click it
         if (focusEl && (menu.contains(focusEl) || document.getElementById('controls').contains(focusEl))) { focusEl.click(); }
@@ -279,7 +314,12 @@
     // Same for mouse - open anchored at click position
     window.addEventListener('click', (ev) => {
       lastTapX = ev.clientX; lastTapY = ev.clientY;
-      if (!menuActive) { menuActive = true; showUIAt(lastTapX, lastTapY); }
+      if (!menuActive) {
+        menuActive = true;
+        if (gyroEnabled) { menuAnchor = { anchored: true, gamma: _g_lastGamma, beta: _g_lastBeta }; }
+        else { menuAnchor = { anchored: true, screenX: lastTapX, screenY: lastTapY }; }
+        showUIAt(lastTapX, lastTapY);
+      }
       else { if (focusEl && (menu.contains(focusEl) || document.getElementById('controls').contains(focusEl))) { focusEl.click(); } scheduleMenuHide(); }
     });
 
@@ -300,6 +340,14 @@
           catch(_) { gyroEnabled = false; e.target.checked = false; alert('Gyro permission error'); return; }
         }
         window.addEventListener('deviceorientation', onDeviceOrientation);
+        // if menu was anchored by screen coords before enabling gyro, compute equivalent anchor angles so it sticks in world
+        if (menuActive && menuAnchor && menuAnchor.screenX != null) {
+          const centerX = window.innerWidth/2, centerY = window.innerHeight/2;
+          const relX = menuAnchor.screenX - centerX;
+          const relY = menuAnchor.screenY - centerY;
+          menuAnchor.gamma = (relX / (window.innerWidth/3)) * 90;
+          menuAnchor.beta = (relY / (window.innerHeight/3)) * 90;
+        }
       } else {
         window.removeEventListener('deviceorientation', onDeviceOrientation);
         // resume auto-hide
@@ -512,8 +560,9 @@
                   const alignPx = alignOffset * tW;
                   // For each eye canvas, position the dot relative to the canvas center but offset horizontally
                   // so the two dots match the stereo separation users see.
-                  const centerLx = lw / 2 - (sepPx * 0.5) * (lw / tW) + (alignPx * (lw / tW));
-                  const centerRx = rw / 2 + (sepPx * 0.5) * (rw / tW) + (alignPx * (rw / tW));
+                  // compute calibration cursor positions so they correspond to the same source point
+                  const centerLx = lw / 2 + (sepPx * 0.5) * (lw / tW) - (alignPx * (lw / tW));
+                  const centerRx = rw / 2 - (sepPx * 0.5) * (rw / tW) - (alignPx * (rw / tW));
                   const centerY = lh / 2;
                   ctxL.fillStyle = 'rgba(255,255,255,0.95)'; ctxL.beginPath(); ctxL.arc(centerLx, centerY, radius, 0, Math.PI * 2); ctxL.fill();
                   ctxR.fillStyle = 'rgba(255,255,255,0.95)'; ctxR.beginPath(); ctxR.arc(centerRx, centerY, radius, 0, Math.PI * 2); ctxR.fill();
