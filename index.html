@@ -191,8 +191,6 @@
   // single align slider
   const alignX = document.getElementById('alignX');
   let alignOffset = parseFloat(alignX.value) || 0;
-  let cursorX = window.innerWidth / 2;
-  let cursorY = window.innerHeight / 2;
     // show/hide UI helpers (add .ui class to elements that should auto-hide)
     menu.classList.add('ui');
     document.getElementById('controls').classList.add('ui');
@@ -206,11 +204,7 @@
       if (menuActive) showUI(); else hideUI();
     });
 
-    // gaze-based selection: cursor stays centered, use deviceorientation to move virtual gaze
-    function updateCursor() {
-      // cursor is centered via CSS; show/hide handled by menuActive
-      // no-op, kept for API compatibility
-    }
+    // gaze-based selection: cursor stays centered (cursor drawn into canvases when menu is visible)
 
     // gaze point in screen coords computed from device orientation
     let gazeX = window.innerWidth / 2, gazeY = window.innerHeight / 2;
