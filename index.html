@@ -46,7 +46,7 @@
       <button id="flipBtn" class="btn">Flip Camera</button>
       <button id="fsBtn" class="btn">Fullscreen</button>
       <label>Eye sep <input id="sep" type="range" min="-0.4" max="0.4" step="0.002" value="0.2"> <span id="sepVal">0.20</span></label>
-      <label>Zoom <input id="zoom" type="range" min="1" max="2" step="0.01" value="1.05"> <span id="zoomVal">1.05</span></label>
+  <label>Zoom <input id="zoom" type="range" min="1" max="2" step="0.01" value="1"> <span id="zoomVal">1.00</span></label>
       <label><input id="mirror" type="checkbox"> Mirror</label>
     </div>
 
@@ -55,9 +55,8 @@
       <button id="menuToggle" class="menu-btn">Settings</button>
         <select id="deviceSelect" aria-label="Camera device"></select>
         <label>FPS <select id="fpsSelect"><option value="30">30</option><option value="60">60</option><option value="120">120</option></select></label>
-        <label>Zoom <input id="zoomMenu" type="range" min="1" max="2" step="0.01" value="1.05"> <span id="zoomMenuVal">1.05</span></label>
-        <label>Wide <input id="wideMode" type="checkbox"></label>
-        <label>Menu Gyro <input id="gyroToggle" type="checkbox"></label>
+  <label>Zoom <input id="zoomMenu" type="range" min="1" max="2" step="0.01" value="1"> <span id="zoomMenuVal">1.00</span></label>
+  <label>Wide <input id="wideMode" type="checkbox"></label>
   <label>Align X <input id="alignX" type="range" min="-0.1" max="0.1" step="0.001" value="0"></label>
     </div>
     <!-- small overlay for permission hints -->
@@ -157,8 +156,13 @@
       eyeSep = parseFloat(e.target.value) || 0;
       sepVal.textContent = eyeSep.toFixed(3);
     });
-    // set initial display for sep control
-    eyeSep = parseFloat(sepControl.value);
+  // set initial display for sep control
+  eyeSep = parseFloat(sepControl.value);
+  sepVal.textContent = eyeSep.toFixed(3);
+  // initialize zoom display values to match controls (ensure 1.00 default)
+  zoom = parseFloat(zoomControl.value) || 1;
+  zoomVal.textContent = zoom.toFixed(2);
+  zoomMenuVal.textContent = zoom.toFixed(2);
 
     zoomControl.addEventListener('input', (e) => {
       zoom = parseFloat(e.target.value) || 1;
@@ -184,8 +188,7 @@
     const menuToggle = document.getElementById('menuToggle');
     const deviceSelect = document.getElementById('deviceSelect');
     const fpsSelect = document.getElementById('fpsSelect');
-    const wideMode = document.getElementById('wideMode');
-    const gyroToggle = document.getElementById('gyroToggle');
+  const wideMode = document.getElementById('wideMode');
 
     let gyroEnabled = false;
     let menuActive = false;
@@ -195,9 +198,9 @@
   // show/hide UI helpers (add .ui class to elements that should auto-hide)
   menu.classList.add('ui');
   document.getElementById('controls').classList.add('ui');
-  // showUI now ensures the menu element is actually displayed (was display:none which prevented showing)
-  function showUI() { menu.style.display = 'flex'; menu.classList.add('visible'); document.getElementById('controls').classList.add('visible'); /* canvas cursor is used for VR; do not toggle DOM cursor */ scheduleMenuHide(); }
-  function hideUI() { menu.classList.remove('visible'); document.getElementById('controls').classList.remove('visible'); menu.style.display = 'none'; gyroToggle.checked = false; gyroEnabled = false; }
+    // showUI now ensures the menu element is actually displayed (was display:none which prevented showing)
+  function showUI() { menu.style.display = 'flex'; menu.classList.add('visible'); document.getElementById('controls').classList.add('visible'); }
+  function hideUI() { menu.classList.remove('visible'); document.getElementById('controls').classList.remove('visible'); menu.style.display = 'none'; gyroEnabled = false; menuAnchor = null; if (focusEl) { focusEl.classList.remove('focused'); } focusEl = null; focusCandidate = null; focusStableCount = 0; }
 
     alignX.addEventListener('input', (e) => { alignOffset = parseFloat(e.target.value) || 0; });
 
@@ -306,13 +309,25 @@
       }
       else {
         // if focused element is in menu/controls and menu active, click it
-        if (focusEl && (menu.contains(focusEl) || document.getElementById('controls').contains(focusEl))) { focusEl.click(); }
-        scheduleMenuHide();
+        if (focusEl && (menu.contains(focusEl) || document.getElementById('controls').contains(focusEl))) {
+          focusEl.click();
+        } else {
+          // tapped an empty area: close menu immediately and return to camera-only view
+          menuActive = false; hideUI();
+        }
       }
     }, { passive: true });
 
-    // Same for mouse - open anchored at click position
-    window.addEventListener('click', (ev) => {
+    // Same for mouse - open anchored at click position; detect double-click to toggle gyro while menu is open
+    let _lastClick = 0;
+    window.addEventListener('click', async (ev) => {
+      const now = Date.now();
+      const dt = now - _lastClick; _lastClick = now;
+      // double-click (within 400ms) toggles gyro when menu is open
+      if (dt > 0 && dt < 400 && menuActive) {
+        if (!gyroEnabled) await enableGyro(); else disableGyro();
+        return;
+      }
       lastTapX = ev.clientX; lastTapY = ev.clientY;
       if (!menuActive) {
         menuActive = true;
@@ -320,7 +335,14 @@
         else { menuAnchor = { anchored: true, screenX: lastTapX, screenY: lastTapY }; }
         showUIAt(lastTapX, lastTapY);
       }
-      else { if (focusEl && (menu.contains(focusEl) || document.getElementById('controls').contains(focusEl))) { focusEl.click(); } scheduleMenuHide(); }
+      else {
+        if (focusEl && (menu.contains(focusEl) || document.getElementById('controls').contains(focusEl))) {
+          focusEl.click();
+        } else {
+          // clicked empty area while menu open: close menu immediately
+          menuActive = false; hideUI();
+        }
+      }
     });
 
     // permission hint overlay
@@ -328,32 +350,32 @@
     const permMsg = document.getElementById('permMsg');
     document.getElementById('permDismiss').addEventListener('click', () => { permHint.style.display = 'none'; permHint.classList.remove('visible'); });
 
-    gyroToggle.addEventListener('change', async (e) => {
-      // Only allow enabling gyro when menu is open (user intent)
-      if (!menuActive) { e.target.checked = false; alert('Open the menu first to enable gyro control'); return; }
-      gyroEnabled = e.target.checked;
-      if (gyroEnabled) {
-        // while gyro is active, keep UI visible and cancel auto-hide
-        if (menuTimeout) { clearTimeout(menuTimeout); menuTimeout = null; }
-        if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-          try { const res = await DeviceOrientationEvent.requestPermission(); if (res !== 'granted') { gyroEnabled = false; e.target.checked = false; alert('Gyro permission denied'); return; } }
-          catch(_) { gyroEnabled = false; e.target.checked = false; alert('Gyro permission error'); return; }
-        }
-        window.addEventListener('deviceorientation', onDeviceOrientation);
-        // if menu was anchored by screen coords before enabling gyro, compute equivalent anchor angles so it sticks in world
-        if (menuActive && menuAnchor && menuAnchor.screenX != null) {
-          const centerX = window.innerWidth/2, centerY = window.innerHeight/2;
-          const relX = menuAnchor.screenX - centerX;
-          const relY = menuAnchor.screenY - centerY;
-          menuAnchor.gamma = (relX / (window.innerWidth/3)) * 90;
-          menuAnchor.beta = (relY / (window.innerHeight/3)) * 90;
-        }
-      } else {
-        window.removeEventListener('deviceorientation', onDeviceOrientation);
-        // resume auto-hide
-        scheduleMenuHide();
+    // enable / disable gyro helpers
+    async function enableGyro() {
+      if (!menuActive) { alert('Open the menu first to enable gyro control'); return false; }
+      if (menuTimeout) { clearTimeout(menuTimeout); menuTimeout = null; }
+      if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+        try {
+          const res = await DeviceOrientationEvent.requestPermission();
+          if (res !== 'granted') { permMsg.textContent = 'Gyro permission denied — open browser settings to enable Motion & Orientation access for this page.'; permHint.style.display = 'block'; permHint.classList.add('visible'); return false; }
+        } catch (err) { permMsg.textContent = 'Gyro permission error — your browser blocked motion access.'; permHint.style.display = 'block'; permHint.classList.add('visible'); return false; }
       }
-    });
+      gyroEnabled = true;
+      window.addEventListener('deviceorientation', onDeviceOrientation);
+      // convert screen anchor to angle anchor if needed
+      if (menuActive && menuAnchor && menuAnchor.screenX != null) {
+        const centerX = window.innerWidth/2, centerY = window.innerHeight/2;
+        const relX = menuAnchor.screenX - centerX; const relY = menuAnchor.screenY - centerY;
+        menuAnchor.gamma = (relX / (window.innerWidth/3)) * 90; menuAnchor.beta = (relY / (window.innerHeight/3)) * 90;
+      }
+      return true;
+    }
+
+    function disableGyro() {
+      gyroEnabled = false;
+      window.removeEventListener('deviceorientation', onDeviceOrientation);
+      scheduleMenuHide();
+    }
 
     // wrap permission request to show friendly hint on denial
     async function tryEnableGyro() {
@@ -368,19 +390,16 @@
     }
 
   // initialize menu hidden; the canvas cursor is drawn into canvases when menu is visible
-  menu.style.display = 'none'; gyroEnabled = false; gyroToggle.checked = false;
+  menu.style.display = 'none'; gyroEnabled = false;
 
-    // menu auto-hide timer
+    // menu auto-hide timer - disabled by default; menu stays until explicit outside tap
     let menuTimeout = null;
     function scheduleMenuHide() {
-      if (menuTimeout) clearTimeout(menuTimeout);
-      // don't auto-hide while gyro is active
-      if (gyroEnabled) return;
-      menuTimeout = setTimeout(() => { menuActive = false; hideUI(); }, 5000);
+      // intentionally empty: we don't auto-hide the menu anymore. Keep function for compatibility.
     }
 
-    // show menu anchored at screen coords (x,y)
-    function showUIAt(x,y) {
+  // show menu anchored at screen coords (x,y)
+  function showUIAt(x,y) {
       // position menu so its center is near the tap point but keep it inside viewport
       const mw = Math.min(window.innerWidth * 0.92, 480);
       const mh = 120;
@@ -391,10 +410,9 @@
       menu.style.top = top + 'px';
       // when anchored we remove the translateX(-50%) so left is absolute
       menu.style.transform = 'none';
-      menu.style.display = 'flex';
-      menu.classList.add('visible');
-      document.getElementById('controls').classList.add('visible');
-      scheduleMenuHide();
+  menu.style.display = 'flex';
+  menu.classList.add('visible');
+  document.getElementById('controls').classList.add('visible');
     }
 
     // ensure showUI (centered) resets transform so menu centers with translateX
