@@ -15,6 +15,21 @@
       background:rgba(0,0,0,0.35); padding:8px; border-radius:8px;
       backdrop-filter: blur(4px);
   }
+  /* on-screen cursor and floating menu */
+  #cursor {
+    position: absolute; width:18px; height:18px; background:rgba(255,255,255,0.9);
+    border-radius:50%; transform:translate(-50%,-50%); pointer-events:none; z-index:60; display:none;
+    box-shadow:0 0 6px rgba(0,0,0,0.6);
+  }
+  #menu {
+    position: absolute; bottom:18px; left:50%; transform:translateX(-50%); z-index:55;
+    background:rgba(0,0,0,0.6); color:#fff; padding:10px; border-radius:10px; display:none; gap:8px;
+    display:flex; flex-direction:row; align-items:center; backdrop-filter: blur(6px);
+  }
+  #menu label { display:flex; align-items:center; gap:6px; margin:0 6px; }
+  .menu-btn { background:#222; border:1px solid #333; color:#fff; padding:6px 8px; border-radius:6px; cursor:pointer; }
+  .menu-btn:active { transform:translateY(1px); }
+  .focused { outline:2px solid #0af; }
   .btn { background:#111; color:#fff; border:1px solid #333; padding:8px 10px; border-radius:6px; cursor:pointer; }
   .btn:active { transform:translateY(1px); }
   label { font-size:13px; display:flex; gap:6px; align-items:center; color:#ddd; }
@@ -38,6 +53,14 @@
     </div>
 
     <div id="hint">Put phone in VR headset. Use "Fullscreen" for best experience.</div>
+    <div id="cursor"></div>
+    <div id="menu">
+      <button id="menuToggle" class="menu-btn">Settings</button>
+      <select id="deviceSelect" aria-label="Camera device"></select>
+      <label>FPS <select id="fpsSelect"><option value="30">30</option><option value="60">60</option><option value="120">120</option></select></label>
+      <label>Wide <input id="wideMode" type="checkbox"></label>
+      <label>Menu Gyro <input id="gyroToggle" type="checkbox"></label>
+    </div>
   </div>
 
   <video id="video" autoplay playsinline muted></video>
@@ -148,6 +171,130 @@
       } else {
         document.exitFullscreen?.();
       }
+    });
+
+    // --- Menu, cursor, device picker, gyro and tap-to-click behavior ---
+    const cursor = document.getElementById('cursor');
+    const menu = document.getElementById('menu');
+    const menuToggle = document.getElementById('menuToggle');
+    const deviceSelect = document.getElementById('deviceSelect');
+    const fpsSelect = document.getElementById('fpsSelect');
+    const wideMode = document.getElementById('wideMode');
+    const gyroToggle = document.getElementById('gyroToggle');
+
+    let gyroEnabled = false;
+    let menuActive = false;
+    let cursorX = window.innerWidth / 2;
+    let cursorY = window.innerHeight / 2;
+
+    menuToggle.addEventListener('click', () => {
+      menuActive = !menuActive;
+      menu.style.display = menuActive ? 'flex' : 'none';
+      cursor.style.display = menuActive ? 'block' : 'none';
+    });
+
+    // tap behavior: first tap activates cursor/menu, second tap clicks
+    let tappedOnce = false;
+    window.addEventListener('touchstart', (e) => {
+      const t = e.touches[0];
+      cursorX = t.clientX; cursorY = t.clientY; updateCursor();
+      if (!tappedOnce) {
+        tappedOnce = true;
+        cursor.style.display = 'block';
+        // show menu if user holds for a short time
+        setTimeout(() => { if (tappedOnce) { menu.style.display = 'flex'; menuActive = true; } }, 600);
+      } else {
+        // second tap: click element under cursor
+        const el = document.elementFromPoint(cursorX, cursorY);
+        if (el) el.click();
+        tappedOnce = false;
+      }
+    }, { passive: true });
+
+    // desktop click also toggles/activates
+    window.addEventListener('click', (e) => {
+      cursorX = e.clientX; cursorY = e.clientY; updateCursor();
+      if (!tappedOnce) {
+        tappedOnce = true; cursor.style.display = 'block';
+        setTimeout(() => { tappedOnce = false; }, 800);
+      } else {
+        const el = document.elementFromPoint(cursorX, cursorY);
+        if (el) el.click();
+        tappedOnce = false;
+      }
+    });
+
+    function updateCursor() { cursor.style.left = cursorX + 'px'; cursor.style.top = cursorY + 'px'; }
+
+    function onDeviceOrientation(e) {
+      if (!gyroEnabled) return;
+      const gx = e.gamma || 0; const gy = e.beta || 0;
+      cursorX = (window.innerWidth / 2) + (gx / 90) * (window.innerWidth / 4);
+      cursorY = (window.innerHeight / 2) + (gy / 90) * (window.innerHeight / 4);
+      cursorX = Math.max(0, Math.min(window.innerWidth, cursorX));
+      cursorY = Math.max(0, Math.min(window.innerHeight, cursorY));
+      updateCursor();
+    }
+
+    gyroToggle.addEventListener('change', async (e) => {
+      gyroEnabled = e.target.checked;
+      if (gyroEnabled) {
+        if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+          try { const res = await DeviceOrientationEvent.requestPermission(); if (res !== 'granted') gyroEnabled = false; }
+          catch(_) { gyroEnabled = false; }
+        }
+        window.addEventListener('deviceorientation', onDeviceOrientation);
+      } else {
+        window.removeEventListener('deviceorientation', onDeviceOrientation);
+      }
+    });
+
+    async function enumerateCameras() {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const cams = devices.filter(d => d.kind === 'videoinput');
+        deviceSelect.innerHTML = '';
+        cams.forEach(c => {
+          const opt = document.createElement('option'); opt.value = c.deviceId; opt.textContent = c.label || c.deviceId;
+          deviceSelect.appendChild(opt);
+        });
+      } catch (err) { console.warn('enumerateDevices failed', err); }
+    }
+    enumerateCameras();
+
+    deviceSelect.addEventListener('change', async (e) => {
+      const deviceId = e.target.value; if (!deviceId) return;
+      stopStream();
+      try {
+        const constraints = { video: { deviceId: { exact: deviceId }, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: parseInt(fpsSelect.value,10) } } };
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+        video.srcObject = stream; await video.play(); resizeCanvases();
+      } catch (err) { console.error('device select error', err); }
+    });
+
+    fpsSelect.addEventListener('change', async () => {
+      const desired = parseInt(fpsSelect.value, 10);
+      if (stream) {
+        const track = stream.getVideoTracks()[0];
+        if (track && track.applyConstraints) {
+          try { await track.applyConstraints({ frameRate: { ideal: desired, max: desired } }); }
+          catch (err) { console.warn('applyConstraints frameRate failed', err); }
+        }
+      }
+    });
+
+    wideMode.addEventListener('change', async (e) => {
+      const wantWide = e.target.checked;
+      if (!stream) return;
+      const track = stream.getVideoTracks()[0]; if (!track) return;
+      const capabilities = track.getCapabilities ? track.getCapabilities() : {};
+      const settings = {};
+      if (capabilities.zoom) {
+        const zmin = capabilities.zoom.min || 1; const zmax = capabilities.zoom.max || 1;
+        settings.advanced = [{ zoom: wantWide ? zmin : Math.min(zmax, zmin + (zmax - zmin) / 2) }];
+      }
+      try { await track.applyConstraints(settings); }
+      catch (err) { console.warn('wideMode applyConstraints failed', err); }
     });
 
     // helper to draw video (or rotated video) onto an offscreen rotated canvas
