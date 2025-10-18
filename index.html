@@ -261,15 +261,21 @@
     });
 
     gyroToggle.addEventListener('change', async (e) => {
+      // Only allow enabling gyro when menu is open (user intent)
+      if (!menuActive) { e.target.checked = false; alert('Open the menu first to enable gyro control'); return; }
       gyroEnabled = e.target.checked;
       if (gyroEnabled) {
+        // while gyro is active, keep UI visible and cancel auto-hide
+        if (menuTimeout) { clearTimeout(menuTimeout); menuTimeout = null; }
         if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-          try { const res = await DeviceOrientationEvent.requestPermission(); if (res !== 'granted') gyroEnabled = false; }
-          catch(_) { gyroEnabled = false; }
+          try { const res = await DeviceOrientationEvent.requestPermission(); if (res !== 'granted') { gyroEnabled = false; e.target.checked = false; alert('Gyro permission denied'); return; } }
+          catch(_) { gyroEnabled = false; e.target.checked = false; alert('Gyro permission error'); return; }
         }
         window.addEventListener('deviceorientation', onDeviceOrientation);
       } else {
         window.removeEventListener('deviceorientation', onDeviceOrientation);
+        // resume auto-hide
+        scheduleMenuHide();
       }
     });
 
@@ -418,6 +424,15 @@
         // drawImage(source, sx, sy, sw, sh, dx, dy, dw, dh)
         ctxL.drawImage(src, sxL, sy, tW, tH, 0, 0, lw, lh);
         ctxR.drawImage(src, sxR, sy, tW, tH, 0, 0, rw, rh);
+
+        // draw centered cursor visible in both eyes when UI is active
+        if (menu.classList.contains('visible')) {
+          const cxL = lw / 2, cyL = lh / 2;
+          const cxR = rw / 2, cyR = rh / 2;
+          const radius = Math.max(6, Math.min(14, Math.floor(lw * 0.012)));
+          ctxL.fillStyle = 'rgba(255,255,255,0.95)'; ctxL.beginPath(); ctxL.arc(cxL, cyL, radius, 0, Math.PI * 2); ctxL.fill();
+          ctxR.fillStyle = 'rgba(255,255,255,0.95)'; ctxR.beginPath(); ctxR.arc(cxR, cyR, radius, 0, Math.PI * 2); ctxR.fill();
+        }
 
         ctxL.restore(); ctxR.restore();
 
