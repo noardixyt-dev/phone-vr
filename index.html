@@ -15,12 +15,7 @@
       background:rgba(0,0,0,0.35); padding:8px; border-radius:8px;
       backdrop-filter: blur(4px);
   }
-  /* on-screen cursor and floating menu */
-  #cursor {
-    position: fixed; left:50%; top:50%; width:18px; height:18px; background:rgba(255,255,255,0.9);
-    border-radius:50%; transform:translate(-50%,-50%); pointer-events:none; z-index:60; display:none;
-    box-shadow:0 0 6px rgba(0,0,0,0.6);
-  }
+  /* floating menu */
   #menu {
     position: absolute; bottom:18px; left:50%; transform:translateX(-50%); z-index:55;
     background:rgba(0,0,0,0.6); color:#fff; padding:10px; border-radius:10px; display:none; gap:8px;
@@ -55,8 +50,7 @@
       <label><input id="mirror" type="checkbox"> Mirror</label>
     </div>
 
-    <div id="hint">Put phone in VR headset. Use "Fullscreen" for best experience.</div>
-    <div id="cursor"></div>
+  <div id="hint">Put phone in VR headset. Use "Fullscreen" for best experience.</div>
     <div id="menu">
       <button id="menuToggle" class="menu-btn">Settings</button>
         <select id="deviceSelect" aria-label="Camera device"></select>
@@ -65,6 +59,11 @@
         <label>Wide <input id="wideMode" type="checkbox"></label>
         <label>Menu Gyro <input id="gyroToggle" type="checkbox"></label>
   <label>Align X <input id="alignX" type="range" min="-0.1" max="0.1" step="0.001" value="0"></label>
+    </div>
+    <!-- small overlay for permission hints -->
+    <div id="permHint" class="ui" style="display:none; position:fixed; left:50%; top:20%; transform:translateX(-50%); background:rgba(0,0,0,0.75); padding:12px; border-radius:8px; z-index:80; max-width:90vw; text-align:center;">
+      <div id="permMsg" style="font-size:14px; color:#fff; margin-bottom:8px;">Gyro permission is required. Grant Motion & Orientation access in the browser when prompted.</div>
+      <button id="permDismiss" class="btn">Dismiss</button>
     </div>
   </div>
 
@@ -211,6 +210,8 @@
     });
     // keep both sliders in sync if top zoom changes
     zoomControl.addEventListener('input', (e) => { const v = parseFloat(e.target.value) || 1; zoomMenu.value = v; zoomMenuVal.textContent = v.toFixed(2); });
+    // initialize menu zoom to current zoom
+    zoomMenu.value = zoomControl.value; zoomMenuVal.textContent = parseFloat(zoomControl.value).toFixed(2);
 
     // last tap coords for anchored menu
     let lastTapX = window.innerWidth/2, lastTapY = window.innerHeight - 80;
@@ -282,6 +283,11 @@
       else { if (focusEl && (menu.contains(focusEl) || document.getElementById('controls').contains(focusEl))) { focusEl.click(); } scheduleMenuHide(); }
     });
 
+    // permission hint overlay
+    const permHint = document.getElementById('permHint');
+    const permMsg = document.getElementById('permMsg');
+    document.getElementById('permDismiss').addEventListener('click', () => { permHint.style.display = 'none'; permHint.classList.remove('visible'); });
+
     gyroToggle.addEventListener('change', async (e) => {
       // Only allow enabling gyro when menu is open (user intent)
       if (!menuActive) { e.target.checked = false; alert('Open the menu first to enable gyro control'); return; }
@@ -300,6 +306,18 @@
         scheduleMenuHide();
       }
     });
+
+    // wrap permission request to show friendly hint on denial
+    async function tryEnableGyro() {
+      if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+        try {
+          const res = await DeviceOrientationEvent.requestPermission();
+          if (res !== 'granted') { permMsg.textContent = 'Gyro permission denied — open browser settings to enable Motion & Orientation access for this page.'; permHint.style.display = 'block'; permHint.classList.add('visible'); return false; }
+          return true;
+        } catch (err) { permMsg.textContent = 'Gyro permission error — your browser blocked motion access.'; permHint.style.display = 'block'; permHint.classList.add('visible'); return false; }
+      }
+      return true;
+    }
 
   // initialize menu hidden; the canvas cursor is drawn into canvases when menu is visible
   menu.style.display = 'none'; gyroEnabled = false; gyroToggle.checked = false;
@@ -486,20 +504,50 @@
         ctxL.drawImage(src, sxL, sy, tW, tH, 0, 0, lw, lh);
         ctxR.drawImage(src, sxR, sy, tW, tH, 0, 0, rw, rh);
 
-            // draw centered cursors visible in both eyes when UI is active
-            if (menu.classList.contains('visible')) {
-              const radius = Math.max(6, Math.min(14, Math.floor(lw * 0.012)));
-              // compute cursor separation in pixels based on current tW crop
-              const sepPx = eyeSep * tW;
-              const alignPx = alignOffset * tW;
-              // For each eye canvas, position the dot relative to the canvas center but offset horizontally
-              // so the two dots match the stereo separation users see.
-              const centerLx = lw / 2 - (sepPx * 0.5) * (lw / tW) + (alignPx * (lw / tW));
-              const centerRx = rw / 2 + (sepPx * 0.5) * (rw / tW) + (alignPx * (rw / tW));
-              const centerY = lh / 2;
-              ctxL.fillStyle = 'rgba(255,255,255,0.95)'; ctxL.beginPath(); ctxL.arc(centerLx, centerY, radius, 0, Math.PI * 2); ctxL.fill();
-              ctxR.fillStyle = 'rgba(255,255,255,0.95)'; ctxR.beginPath(); ctxR.arc(centerRx, centerY, radius, 0, Math.PI * 2); ctxR.fill();
-            }
+            // draw centered cursors visible in both eyes when UI is active, and draw gyro reticle when gyro active
+                const radius = Math.max(6, Math.min(14, Math.floor(lw * 0.012)));
+                if (menu.classList.contains('visible')) {
+                  // compute cursor separation in pixels based on current tW crop
+                  const sepPx = eyeSep * tW;
+                  const alignPx = alignOffset * tW;
+                  // For each eye canvas, position the dot relative to the canvas center but offset horizontally
+                  // so the two dots match the stereo separation users see.
+                  const centerLx = lw / 2 - (sepPx * 0.5) * (lw / tW) + (alignPx * (lw / tW));
+                  const centerRx = rw / 2 + (sepPx * 0.5) * (rw / tW) + (alignPx * (rw / tW));
+                  const centerY = lh / 2;
+                  ctxL.fillStyle = 'rgba(255,255,255,0.95)'; ctxL.beginPath(); ctxL.arc(centerLx, centerY, radius, 0, Math.PI * 2); ctxL.fill();
+                  ctxR.fillStyle = 'rgba(255,255,255,0.95)'; ctxR.beginPath(); ctxR.arc(centerRx, centerY, radius, 0, Math.PI * 2); ctxR.fill();
+                }
+                // draw gyro reticle mapped from screen gaze to each canvas
+                if (gyroEnabled) {
+                  // map gazeX/gazeY (screen coordinate) into each canvas pixel coordinate
+                  const leftRect = leftCanvas.getBoundingClientRect();
+                  const rightRect = rightCanvas.getBoundingClientRect();
+                  // normalize to canvas pixel coordinates
+                  const gxL = (gazeX - leftRect.left) * (leftCanvas.width / leftRect.width);
+                  const gyL = (gazeY - leftRect.top) * (leftCanvas.height / leftRect.height);
+                  const gxR = (gazeX - rightRect.left) * (rightCanvas.width / rightRect.width);
+                  const gyR = (gazeY - rightRect.top) * (rightCanvas.height / rightRect.height);
+                  // draw small ring
+                  ctxL.strokeStyle = 'rgba(0,170,255,0.95)'; ctxL.lineWidth = Math.max(2, Math.floor(lw * 0.002)); ctxL.beginPath(); ctxL.arc(gxL, gyL, radius+2, 0, Math.PI*2); ctxL.stroke();
+                  ctxR.strokeStyle = 'rgba(0,170,255,0.95)'; ctxR.lineWidth = Math.max(2, Math.floor(rw * 0.002)); ctxR.beginPath(); ctxR.arc(gxR, gyR, radius+2, 0, Math.PI*2); ctxR.stroke();
+                  // draw small anchor marker where the menu is anchored (if visible and anchored)
+                  if (menu.classList.contains('visible') && menu.style.transform === 'none') {
+                    const mLeft = parseFloat(menu.style.left || '0');
+                    const mTop = parseFloat(menu.style.top || '0');
+                    // map menu anchor to each canvas if within the canvas rect
+                    const lRect = leftCanvas.getBoundingClientRect();
+                    const rRect = rightCanvas.getBoundingClientRect();
+                    const anchorX = mLeft + (menu.offsetWidth/2);
+                    const anchorY = mTop + (menu.offsetHeight/2);
+                    const axL = (anchorX - lRect.left) * (leftCanvas.width / lRect.width);
+                    const ayL = (anchorY - lRect.top) * (leftCanvas.height / lRect.height);
+                    const axR = (anchorX - rRect.left) * (rightCanvas.width / rRect.width);
+                    const ayR = (anchorY - rRect.top) * (rightCanvas.height / rRect.height);
+                    ctxL.strokeStyle = 'rgba(255,200,0,0.9)'; ctxL.beginPath(); ctxL.arc(axL, ayL, radius+6, 0, Math.PI*2); ctxL.stroke();
+                    ctxR.strokeStyle = 'rgba(255,200,0,0.9)'; ctxR.beginPath(); ctxR.arc(axR, ayR, radius+6, 0, Math.PI*2); ctxR.stroke();
+                  }
+                }
 
         ctxL.restore(); ctxR.restore();
 
