@@ -6,8 +6,10 @@
 <title>VR Phone Camera (Side-by-side)</title>
 <style>
   html,body { height:100%; margin:0; background:#000; color:#fff; font-family:system-ui, -apple-system, sans-serif; }
-  #container { width:100%; height:100%; display:flex; align-items:center; justify-content:center; position:relative; overflow:hidden; }
-  .eyeCanvas { background:#000; display:block; }
+  /* Use full viewport height to avoid mobile chrome resizing issues
+    and stretch canvases so both eyes align exactly top-to-bottom */
+  #container { width:100%; height:100vh; display:flex; align-items:stretch; justify-content:center; position:relative; overflow:hidden; gap:0; }
+  .eyeCanvas { background:#000; display:block; width:50%; height:100%; }
   #controls {
       position: absolute; top:10px; left:10px; right:10px; display:flex; gap:8px; align-items:center;
       background:rgba(0,0,0,0.35); padding:8px; border-radius:8px;
@@ -102,17 +104,22 @@
 
     function resizeCanvases() {
       const dpr = window.devicePixelRatio || 1;
-      const w = container.clientWidth;
-      const h = container.clientHeight;
+      // Use the viewport size to avoid mobile chrome UI changing container size
+      const w = window.innerWidth;
+      const h = window.innerHeight;
       const eyeW = Math.floor(w / 2);
+
+      // Set CSS size (layout) so canvases occupy exactly half the viewport each
       leftCanvas.style.width = eyeW + 'px';
       leftCanvas.style.height = h + 'px';
       rightCanvas.style.width = eyeW + 'px';
       rightCanvas.style.height = h + 'px';
-      leftCanvas.width = eyeW * dpr;
-      leftCanvas.height = h * dpr;
-      rightCanvas.width = eyeW * dpr;
-      rightCanvas.height = h * dpr;
+
+      // Set internal canvas pixel size according to devicePixelRatio to avoid blurriness
+      leftCanvas.width = Math.max(1, Math.floor(eyeW * dpr));
+      leftCanvas.height = Math.max(1, Math.floor(h * dpr));
+      rightCanvas.width = Math.max(1, Math.floor(eyeW * dpr));
+      rightCanvas.height = Math.max(1, Math.floor(h * dpr));
     }
 
     window.addEventListener('resize', () => {
@@ -240,5 +247,3 @@
   </script>
 </body>
 </html>
-
-
