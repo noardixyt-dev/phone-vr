@@ -25,6 +25,7 @@
     position: absolute; bottom:18px; left:50%; transform:translateX(-50%); z-index:55;
     background:rgba(0,0,0,0.6); color:#fff; padding:10px; border-radius:10px; display:none; gap:8px;
     flex-direction:row; align-items:center; backdrop-filter: blur(6px);
+    max-width:92vw; flex-wrap:wrap; overflow:auto; gap:6px;
   }
   #menu label { display:flex; align-items:center; gap:6px; margin:0 6px; }
   .menu-btn { background:#222; border:1px solid #333; color:#fff; padding:6px 8px; border-radius:6px; cursor:pointer; }
@@ -60,8 +61,7 @@
         <label>FPS <select id="fpsSelect"><option value="30">30</option><option value="60">60</option><option value="120">120</option></select></label>
         <label>Wide <input id="wideMode" type="checkbox"></label>
         <label>Menu Gyro <input id="gyroToggle" type="checkbox"></label>
-        <label>Left X <input id="leftX" type="range" min="-0.2" max="0.2" step="0.001" value="0"></label>
-        <label>Right X <input id="rightX" type="range" min="-0.2" max="0.2" step="0.001" value="0"></label>
+  <label>Align X <input id="alignX" type="range" min="-0.1" max="0.1" step="0.001" value="0"></label>
     </div>
   </div>
 
@@ -186,6 +186,9 @@
 
     let gyroEnabled = false;
     let menuActive = false;
+      // single align slider
+      const alignX = document.getElementById('alignX');
+      let alignOffset = parseFloat(alignX.value) || 0;
     let cursorX = window.innerWidth / 2;
     let cursorY = window.innerHeight / 2;
   // offsets for per-eye calibration (fraction of crop width)
@@ -195,6 +198,7 @@
   let rightOffset = parseFloat(rightX.value) || 0;
 
     menuToggle.addEventListener('click', () => {
+      alignX.addEventListener('input', (e) => { alignOffset = parseFloat(e.target.value) || 0; });
       menuActive = !menuActive;
       menu.style.display = menuActive ? 'flex' : 'none';
       cursor.style.display = menuActive ? 'block' : 'none';
