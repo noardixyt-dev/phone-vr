@@ -37,6 +37,8 @@
   input[type=range] { width:140px; }
   #hint { position:absolute; bottom:12px; left:12px; right:12px; text-align:center; font-size:13px; color:#ddd; }
   #video { display:none; }
+  .ui { transition: opacity 300ms ease; opacity:0; pointer-events:none; }
+  .ui.visible { opacity:1; pointer-events:auto; }
 </style>
 </head>
 <body>
@@ -175,7 +177,7 @@
       }
     });
 
-    // --- Menu, cursor, device picker, gyro and tap-to-click behavior ---
+  // --- Menu, cursor, device picker, gyro and tap-to-click behavior ---
     const cursor = document.getElementById('cursor');
     const menu = document.getElementById('menu');
     const menuToggle = document.getElementById('menuToggle');
@@ -186,22 +188,22 @@
 
     let gyroEnabled = false;
     let menuActive = false;
-      // single align slider
-      const alignX = document.getElementById('alignX');
-      let alignOffset = parseFloat(alignX.value) || 0;
-    let cursorX = window.innerWidth / 2;
-    let cursorY = window.innerHeight / 2;
-  // offsets for per-eye calibration (fraction of crop width)
-  const leftX = document.getElementById('leftX');
-  const rightX = document.getElementById('rightX');
-  let leftOffset = parseFloat(leftX.value) || 0;
-  let rightOffset = parseFloat(rightX.value) || 0;
+  // single align slider
+  const alignX = document.getElementById('alignX');
+  let alignOffset = parseFloat(alignX.value) || 0;
+  let cursorX = window.innerWidth / 2;
+  let cursorY = window.innerHeight / 2;
+    // show/hide UI helpers (add .ui class to elements that should auto-hide)
+    menu.classList.add('ui');
+    document.getElementById('controls').classList.add('ui');
+    function showUI() { menu.classList.add('visible'); document.getElementById('controls').classList.add('visible'); cursor.style.display = 'block'; scheduleMenuHide(); }
+    function hideUI() { menu.classList.remove('visible'); document.getElementById('controls').classList.remove('visible'); cursor.style.display = 'none'; gyroToggle.checked = false; gyroEnabled = false; }
+
+    alignX.addEventListener('input', (e) => { alignOffset = parseFloat(e.target.value) || 0; });
 
     menuToggle.addEventListener('click', () => {
-      alignX.addEventListener('input', (e) => { alignOffset = parseFloat(e.target.value) || 0; });
       menuActive = !menuActive;
-      menu.style.display = menuActive ? 'flex' : 'none';
-      cursor.style.display = menuActive ? 'block' : 'none';
+      if (menuActive) showUI(); else hideUI();
     });
 
     // gaze-based selection: cursor stays centered, use deviceorientation to move virtual gaze
@@ -222,41 +224,40 @@
       // determine focused element under center point (cursor is visually centered)
       if (menuActive) {
         const el = document.elementFromPoint(window.innerWidth/2, window.innerHeight/2);
-        highlightFocus(el);
+        // only focus menu children
+        if (el && menu.contains(el)) highlightFocus(el); else highlightFocus(null);
       }
     }
 
     // focus highlighting (no auto-click). Selection happens only on explicit tap/click.
     let focusEl = null;
+    let focusCandidate = null;
+    let focusStableCount = 0;
     function highlightFocus(el) {
+      // simple stability: require same element for 2 frames
+      if (focusCandidate !== el) { focusCandidate = el; focusStableCount = 0; }
+      focusStableCount++;
+      if (focusStableCount < 2) return;
       if (focusEl === el) return;
       if (focusEl) focusEl.classList.remove('focused');
       focusEl = el;
-      if (focusEl) {
-        focusEl.classList.add('focused');
-      }
+      if (focusEl) focusEl.classList.add('focused');
     }
 
-    // Touch to open menu or to click focused element when menu is open
+    // Touch to open menu or to click focused element when menu is open (YouTube VR style)
     window.addEventListener('touchstart', (ev) => {
-      // small UX: if menu hidden, show it and show cursor; if visible, click focused element
-      if (!menuActive) {
-        menuActive = true; menu.style.display = 'flex'; cursor.style.display = 'block';
-      } else {
-        const el = document.elementFromPoint(window.innerWidth/2, window.innerHeight/2);
-        if (el) el.click();
+      if (!menuActive) { menuActive = true; showUI(); }
+      else {
+        // if focused element is in menu and menu active, click it
+        if (focusEl && menu.contains(focusEl)) { focusEl.click(); }
+        scheduleMenuHide();
       }
-      // don't interfere with other handlers
     }, { passive: true });
 
-    // Same behavior for mouse click on desktop
+    // Same for mouse
     window.addEventListener('click', (ev) => {
-      if (!menuActive) {
-        menuActive = true; menu.style.display = 'flex'; cursor.style.display = 'block';
-      } else {
-        const el = document.elementFromPoint(window.innerWidth/2, window.innerHeight/2);
-        if (el) el.click();
-      }
+      if (!menuActive) { menuActive = true; showUI(); }
+      else { if (focusEl && menu.contains(focusEl)) { focusEl.click(); } scheduleMenuHide(); }
     });
 
     gyroToggle.addEventListener('change', async (e) => {
@@ -275,8 +276,13 @@
     // initialize menu hidden and cursor hidden
     menu.style.display = 'none'; cursor.style.display = 'none'; gyroEnabled = false; gyroToggle.checked = false;
 
-    leftX.addEventListener('input', (e) => { leftOffset = parseFloat(e.target.value) || 0; });
-    rightX.addEventListener('input', (e) => { rightOffset = parseFloat(e.target.value) || 0; });
+    // menu auto-hide timer
+    let menuTimeout = null;
+    function scheduleMenuHide() {
+      if (menuTimeout) clearTimeout(menuTimeout);
+      menuTimeout = setTimeout(() => { menuActive = false; hideUI(); }, 5000);
+    }
+
 
     async function enumerateCameras() {
       try {
@@ -393,9 +399,10 @@
 
   const sepPx = eyeSep * tW; // eyeSep is fraction of crop width
 
-  // apply per-eye offsets (fractions of crop width)
-  const sxL = Math.max(0, Math.min(srcW - tW, sxc - sepPx * 0.5 + leftOffset * tW));
-  const sxR = Math.max(0, Math.min(srcW - tW, sxc + sepPx * 0.5 + rightOffset * tW));
+  // apply alignOffset (same for both eyes) in fractions of crop width
+  const alignPx = alignOffset * tW;
+  const sxL = Math.max(0, Math.min(srcW - tW, sxc - sepPx * 0.5 + alignPx));
+  const sxR = Math.max(0, Math.min(srcW - tW, sxc + sepPx * 0.5 + alignPx));
         const sy = Math.max(0, Math.min(srcH - tH, syc));
 
         // draw options: mirror by transforming canvas
